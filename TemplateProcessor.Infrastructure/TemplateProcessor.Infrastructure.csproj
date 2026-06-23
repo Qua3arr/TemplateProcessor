@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TemplateProcessor.Application\TemplateProcessor.Application.csproj" />
+    <ProjectReference Include="..\TemplateProcessor.Domain\TemplateProcessor.Domain.csproj" />
+  </ItemGroup>
+
+</Project>
