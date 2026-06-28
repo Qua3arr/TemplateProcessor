@@ -27,29 +27,44 @@ namespace TemplateProcessor.Application.UseCases
 
         //Выполняет генерацию документа.
         public async Task<Stream> ExecuteAsync(
-            string templatePath,
-            OutputFormat outputFormat,
-            TemplateContext context,
-            CancellationToken cancellationToken = default)
+        string templatePath,
+        OutputFormat outputFormat,
+        TemplateContext context,
+        CancellationToken cancellationToken = default)
         {
-            var inputFormat = GetFormatFromPath(templatePath);
+            try
+            {
+                var inputFormat = GetFormatFromPath(templatePath);
 
-            await using var templateStream = await _storage.ReadAsync(templatePath, cancellationToken);
+                await using var templateStream = await _storage.ReadAsync(templatePath, cancellationToken);
 
-            var variables = await _analyzer.AnalyzeAsync(templateStream, inputFormat, cancellationToken);
+                var variables = await _analyzer.AnalyzeAsync(templateStream, inputFormat, cancellationToken);
 
-            TemplateValidationService.Validate(variables, context);
+                TemplateValidationService.Validate(variables, context);
 
-            templateStream.Seek(0, SeekOrigin.Begin);
+                templateStream.Seek(0, SeekOrigin.Begin);
 
-            var resultStream = await _renderer.RenderAsync(
-                templateStream,
-                context,
-                inputFormat,
-                outputFormat,
-                cancellationToken);
+                var resultStream = await _renderer.RenderAsync(
+                    templateStream,
+                    context,
+                    inputFormat,
+                    outputFormat,
+                    cancellationToken);
 
-            return resultStream;
+                return resultStream;
+            }
+            catch (MissingDataException)
+            {
+                throw;
+            }
+            catch (UnsupportedFormatException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is not (MissingDataException or UnsupportedFormatException))
+            {
+                throw new TemplateParsingException($"Error during document rendering: {ex.Message}", ex);
+            }
         }
 
         //Определяет формат шаблона по расширению файла.
