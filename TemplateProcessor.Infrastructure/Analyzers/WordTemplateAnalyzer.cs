@@ -18,8 +18,6 @@ namespace TemplateProcessor.Infrastructure.Analyzers
             @"\{\{(?<type>[#\/]?)(?<name>[^{}]+)\}\}",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-
-        //Анализирует .docx шаблон и извлекает все переменные
         public Task<IReadOnlyList<TemplateVariable>> AnalyzeAsync(
             Stream templateStream,
             TemplateFormat format,
@@ -29,6 +27,7 @@ namespace TemplateProcessor.Infrastructure.Analyzers
                 throw new ArgumentException("Format must be Word", nameof(format));
 
             var variables = new HashSet<TemplateVariable>(new TemplateVariableComparer());
+            var insideCollection = false;
 
             using var document = WordprocessingDocument.Open(templateStream, false);
             var body = document.MainDocumentPart?.Document.Body;
@@ -42,43 +41,41 @@ namespace TemplateProcessor.Infrastructure.Analyzers
                 if (string.IsNullOrEmpty(text))
                     continue;
 
-                FindPlaceholders(text, variables);
-            }
+                //Проверяем, есть ли маркер начала или конца коллекции
+                var matchStart = Regex.Match(text, @"\{\{#(?<name>[^{}]+)\}\}");
+                var matchEnd = Regex.Match(text, @"\{\{/(?<name>[^{}]+)\}\}");
 
-            //Также обрабатываем таблицы (если есть)
-            foreach (var table in body.Descendants<Table>())
-            {
-                foreach (var row in table.Descendants<TableRow>())
+                if (matchStart.Success)
                 {
-                    foreach (var cell in row.Descendants<TableCell>())
-                    {
-                        foreach (var paragraph in cell.Descendants<Paragraph>())
-                        {
-                            var text = ExtractTextFromParagraph(paragraph);
-                            if (string.IsNullOrEmpty(text))
-                                continue;
-
-                            FindPlaceholders(text, variables);
-                        }
-                    }
+                    var name = matchStart.Groups["name"].Value.Trim();
+                    variables.Add(new TemplateVariable(name, VariableType.Collection));
+                    insideCollection = true;
+                    continue; 
                 }
+
+                if (matchEnd.Success)
+                {
+                    insideCollection = false;
+                    continue;
+                }
+
+                //Если мы внутри коллекции, не добавляем переменные из этого параграфа
+                if (insideCollection)
+                    continue;
+
+                //Ищем обычные плейсхолдеры (скаляры) только вне коллекций
+                FindPlaceholders(text, variables);
             }
 
             return Task.FromResult<IReadOnlyList<TemplateVariable>>(variables.ToList());
         }
 
-        //извлекает текст из параграфа
         private static string ExtractTextFromParagraph(Paragraph paragraph)
         {
             var runs = paragraph.Descendants<Run>().ToList();
-            if (runs.Count == 0)
-                return string.Empty;
-
-            var text = string.Join("", runs.Select(r => r.InnerText));
-            return text.Trim();
+            return runs.Count == 0 ? string.Empty : string.Join("", runs.Select(r => r.InnerText)).Trim();
         }
 
-        //Ищет плейсхолдеры в тексте и добавляет их в коллекцию
         private static void FindPlaceholders(string text, HashSet<TemplateVariable> variables)
         {
             var matches = PlaceholderRegex.Matches(text);
@@ -90,14 +87,11 @@ namespace TemplateProcessor.Infrastructure.Analyzers
                 if (string.IsNullOrEmpty(name))
                     continue;
 
-                var variableType = typeChar switch
-                {
-                    "#" => VariableType.Collection,
-                    "/" => VariableType.Collection,
-                    _ => VariableType.Scalar
-                };
+                //Игнорируем маркеры коллекций (их мы уже обработали отдельно)
+                if (typeChar is "#" or "/")
+                    continue;
 
-                variables.Add(new TemplateVariable(name, variableType));
+                variables.Add(new TemplateVariable(name, VariableType.Scalar));
             }
         }
 
