@@ -12,6 +12,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using TemplateProcessor.Domain.Exceptions;
 using TemplateProcessor.Domain.Ports;
 using TemplateProcessor.Domain.ValueObjects;
+using TemplateProcessor.Infrastructure.Converters;
 
 //Рендерер для Ворд шаблонов
 namespace TemplateProcessor.Infrastructure.Renderers
@@ -30,7 +31,16 @@ namespace TemplateProcessor.Infrastructure.Renderers
             @"\{\{/(?<name>[^{}]+)\}\}",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        public Task<Stream> RenderAsync(
+        private readonly WordToPdfConverter _pdfConverter;
+
+        public WordRenderer() : this(new WordToPdfConverter()) { }
+
+        public WordRenderer(WordToPdfConverter pdfConverter)
+        {
+            _pdfConverter = pdfConverter ?? throw new ArgumentNullException(nameof(pdfConverter));
+        }
+
+        public async Task<Stream> RenderAsync(
             Stream templateStream,
             TemplateContext context,
             TemplateFormat inputFormat,
@@ -40,9 +50,24 @@ namespace TemplateProcessor.Infrastructure.Renderers
             if (inputFormat != TemplateFormat.Word)
                 throw new ArgumentException("Renderer supports only Word format", nameof(inputFormat));
 
-            if (outputFormat != OutputFormat.Docx)
-                throw new UnsupportedFormatException($"WordRenderer does not support output format: {outputFormat}");
+            var docxStream = RenderToDocx(templateStream, context);
 
+            if (outputFormat == OutputFormat.Pdf)
+            {
+                return await _pdfConverter.ConvertAsync(docxStream, cancellationToken);
+            }
+
+            if (outputFormat == OutputFormat.Docx)
+            {
+                return docxStream;
+            }
+
+            throw new UnsupportedFormatException($"WordRenderer does not support output format: {outputFormat}");
+
+        }
+
+        private Stream RenderToDocx(Stream templateStream, TemplateContext context)
+        {
             var memoryStream = new MemoryStream();
             templateStream.CopyTo(memoryStream);
             memoryStream.Position = 0;
@@ -57,7 +82,7 @@ namespace TemplateProcessor.Infrastructure.Renderers
 
             document.Save();
             memoryStream.Position = 0;
-            return Task.FromResult<Stream>(memoryStream);
+            return memoryStream;
         }
 
         private static void ReplaceScalars(OpenXmlElement container, Dictionary<string, object> scalars)
