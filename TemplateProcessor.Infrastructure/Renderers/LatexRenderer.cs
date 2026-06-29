@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using TemplateProcessor.Domain.Exceptions;
 using TemplateProcessor.Domain.Ports;
 using TemplateProcessor.Domain.ValueObjects;
+using TemplateProcessor.Infrastructure.Converters;
 
 //Рендерер для Latex
 namespace TemplateProcessor.Infrastructure.Renderers
@@ -19,7 +20,20 @@ namespace TemplateProcessor.Infrastructure.Renderers
             @"\{\{(?<type>[#\/]?)(?<name>[^{}]+)\}\}",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        public Task<Stream> RenderAsync(
+        private static readonly Regex CollectionPattern = new(
+            @"\{\{#(?<name>[^{}]+)\}\}(?<template>.*?)\{\{/\k<name>\}\}",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+        private readonly LatexToPdfConverter _pdfConverter;
+
+        public LatexRenderer() : this(new LatexToPdfConverter()) { }
+
+        public LatexRenderer(LatexToPdfConverter pdfConverter)
+        {
+            _pdfConverter = pdfConverter ?? throw new ArgumentNullException(nameof(pdfConverter));
+        }
+
+        public async Task<Stream> RenderAsync(
             Stream templateStream,
             TemplateContext context,
             TemplateFormat inputFormat,
@@ -29,9 +43,24 @@ namespace TemplateProcessor.Infrastructure.Renderers
             if (inputFormat != TemplateFormat.Latex)
                 throw new ArgumentException("Renderer supports only LaTeX format", nameof(inputFormat));
 
-            if (outputFormat != OutputFormat.Tex)
-                throw new UnsupportedFormatException($"LatexRenderer does not support output format: {outputFormat}");
+            //Генерируем .tex
+            var texStream = RenderToTex(templateStream, context);
 
+            if (outputFormat == OutputFormat.Pdf)
+            {
+                return await _pdfConverter.ConvertAsync(texStream, cancellationToken);
+            }
+
+            if (outputFormat == OutputFormat.Tex)
+            {
+                return texStream;
+            }
+
+            throw new UnsupportedFormatException($"LatexRenderer does not support output format: {outputFormat}");
+        }
+
+        private Stream RenderToTex(Stream templateStream, TemplateContext context)
+        {
             using var reader = new StreamReader(templateStream);
             var content = reader.ReadToEnd();
 
@@ -46,8 +75,7 @@ namespace TemplateProcessor.Infrastructure.Renderers
             writer.Write(content);
             writer.Flush();
             memoryStream.Position = 0;
-
-            return Task.FromResult<Stream>(memoryStream);
+            return memoryStream;
         }
 
         private static string ReplaceScalars(string content, Dictionary<string, object> scalars)
@@ -79,10 +107,7 @@ namespace TemplateProcessor.Infrastructure.Renderers
 
         private static string ProcessCollections(string content, Dictionary<string, IEnumerable<Dictionary<string, object>>> collections)
         {
-            var pattern = @"\{\{#(?<name>[^{}]+)\}\}(?<template>.*?)\{\{/\k<name>\}\}";
-            var regex = new Regex(pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-            return regex.Replace(content, match =>
+            return CollectionPattern.Replace(content, match =>
             {
                 var collectionName = match.Groups["name"].Value.Trim();
                 var template = match.Groups["template"].Value;
@@ -94,7 +119,6 @@ namespace TemplateProcessor.Infrastructure.Renderers
                 foreach (var item in items)
                 {
                     var row = template;
-                    //Заменяем плейсхолдеры внутри шаблона строки
                     var rowMatches = PlaceholderRegex.Matches(row);
                     foreach (Match rm in rowMatches)
                     {
