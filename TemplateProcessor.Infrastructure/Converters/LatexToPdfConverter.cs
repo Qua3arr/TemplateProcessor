@@ -18,7 +18,40 @@ namespace TemplateProcessor.Infrastructure.Converters
         {
             _latexCompilerPath = latexCompilerPath ?? "pdflatex";
             _timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
+            if (!IsLatexCompilerAvailable())
+            {
+                throw new InvalidOperationException(
+                    $"pdflatex is not installed or not available in PATH. " +
+                    "Please install TeX Live (https://tug.org/texlive/) or MiKTeX (https://miktex.org/) " +
+                    "and ensure 'pdflatex' is accessible, or specify the full path in the constructor.");
+            }
         }
+
+        private bool IsLatexCompilerAvailable()
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _latexCompilerPath,
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var process = Process.Start(startInfo);
+                if (process == null) return false;
+                process.WaitForExit(1000);
+                return process.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
 
         //Конвертирует поток
         public async Task<Stream> ConvertAsync(Stream texStream, CancellationToken cancellationToken = default)

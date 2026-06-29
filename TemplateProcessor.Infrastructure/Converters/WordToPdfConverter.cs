@@ -19,7 +19,40 @@ namespace TemplateProcessor.Infrastructure.Converters
         {
             _libreOfficePath = libreOfficePath ?? "soffice";
             _timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
+            if (!IsLibreOfficeAvailable())
+            {
+                throw new InvalidOperationException(
+                    "LibreOffice is not installed or not available in PATH. " +
+                    "Please install LibreOffice from https://www.libreoffice.org/ " +
+                    "or specify the full path to the executable in the constructor.");
+            }
         }
+
+        private bool IsLibreOfficeAvailable()
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _libreOfficePath,
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var process = Process.Start(startInfo);
+                if (process == null) return false;
+                process.WaitForExit(1000);
+                return process.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
 
         //Конвертирует поток с документом
         public async Task<Stream> ConvertAsync(Stream docxStream, CancellationToken cancellationToken = default)
