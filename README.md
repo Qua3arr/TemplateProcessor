@@ -207,6 +207,47 @@ var storage = new LocalFileStorage(@"C:\Templates", logger);
 
 Если логгер не передан, используется `NullLogger`.
 
+## Проверка записи в MinIO
+
+Для проверки записи результата в blob storage добавлен порт `IBlobStorage` и реализация `MinioBlobStorage`. Она работает с MinIO как с S3-compatible хранилищем и выполняет подписанный `PUT`-запрос в bucket.
+
+Регистрация:
+
+```csharp
+services.AddMinioBlobStorage(new MinioBlobStorageOptions
+{
+    Endpoint = "http://localhost:9000",
+    BucketName = "documents",
+    AccessKey = "minioadmin",
+    SecretKey = "minioadmin"
+});
+```
+
+Проверка, что запись доступна:
+
+```csharp
+var blobStorage = provider.GetRequiredService<IBlobStorage>();
+await blobStorage.CheckWriteAsync();
+```
+
+Метод `CheckWriteAsync` записывает небольшой объект `_checks/template-processor-write-check.txt`. Если endpoint, bucket или права доступа настроены неверно, будет выброшено `BlobStorageException`.
+
+Bucket должен быть заранее создан в MinIO, потому что адаптер проверяет именно возможность записи объекта, а не администрирование хранилища.
+
+Загрузка готового документа:
+
+```csharp
+await using var result = await module.RenderDocumentAsync(
+    "SampleTemplate.docx",
+    OutputFormat.Docx,
+    context);
+
+await blobStorage.UploadAsync(
+    "generated/GeneratedDocument.docx",
+    result,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+```
+
 ## PDF-конвертация
 
 Word в PDF конвертируется через LibreOffice:
@@ -235,7 +276,7 @@ TemplateProcessor.Tests/Fixtures/Templates
 
 ## Заметки
 
-- Фасад сейчас собирается под конкретный формат: анализатор и рендерер должны соответствовать типу шаблона.
+- Фасад выбирает анализатор и рендерер через фабрики по входному и выходному формату.
 - Перед рендерингом проверяются все обязательные переменные.
 - LaTeX-значения экранируют символы `#`, `$`, `%`, `&`, `_`, `{`, `}`, `\`, `~`, `^`.
 - Word и Excel рендереры сохраняют объединенные ячейки при клонировании строк коллекций.

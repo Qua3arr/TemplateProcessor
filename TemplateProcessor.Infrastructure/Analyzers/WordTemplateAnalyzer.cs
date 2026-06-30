@@ -30,7 +30,7 @@ namespace TemplateProcessor.Infrastructure.Analyzers
             var insideCollection = false;
 
             using var document = WordprocessingDocument.Open(templateStream, false);
-            var body = document.MainDocumentPart?.Document.Body;
+            var body = document.MainDocumentPart?.Document?.Body;
             if (body == null)
                 return Task.FromResult<IReadOnlyList<TemplateVariable>>(variables.ToList());
 
@@ -97,7 +97,7 @@ namespace TemplateProcessor.Infrastructure.Analyzers
 
         private class TemplateVariableComparer : IEqualityComparer<TemplateVariable>
         {
-            public bool Equals(TemplateVariable x, TemplateVariable y)
+            public bool Equals(TemplateVariable? x, TemplateVariable? y)
             {
                 if (ReferenceEquals(x, y)) return true;
                 if (x is null || y is null) return false;
@@ -106,7 +106,7 @@ namespace TemplateProcessor.Infrastructure.Analyzers
 
             public int GetHashCode(TemplateVariable obj)
             {
-                return obj.Name?.ToLowerInvariant().GetHashCode() ?? 0;
+                return StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name);
             }
         }
     }

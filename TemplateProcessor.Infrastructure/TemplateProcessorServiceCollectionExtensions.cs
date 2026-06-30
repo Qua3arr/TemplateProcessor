@@ -37,5 +37,17 @@ namespace TemplateProcessor.Infrastructure
 
             return services;
         }
+
+        public static IServiceCollection AddMinioBlobStorage(
+            this IServiceCollection services,
+            MinioBlobStorageOptions options)
+        {
+            services.AddSingleton<IBlobStorage>(provider =>
+                new MinioBlobStorage(
+                    options,
+                    provider.GetService<ILogger<MinioBlobStorage>>()));
+
+            return services;
+        }
     }
 }
