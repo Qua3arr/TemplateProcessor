@@ -89,29 +89,13 @@ namespace TemplateProcessor.Infrastructure.Renderers
 
         private static string ReplaceScalars(string content, Dictionary<string, object> scalars)
         {
-            var matches = PlaceholderRegex.Matches(content);
-            var newContent = content;
-
-            foreach (Match match in matches)
+            return ReplacePlaceholders(content, name =>
             {
-                var name = match.Groups["name"].Value.Trim();
-                var type = match.Groups["type"].Value;
-
-                if (type == "#" || type == "/")
-                    continue;
-
-                if (scalars.TryGetValue(name, out var value))
-                {
-                    var replacement = EscapeLaTeX(value?.ToString() ?? string.Empty);
-                    newContent = newContent.Replace(match.Value, replacement);
-                }
-                else
-                {
+                if (!scalars.TryGetValue(name, out var value))
                     throw new MissingDataException(name);
-                }
-            }
 
-            return newContent;
+                return EscapeLaTeX(value?.ToString() ?? string.Empty);
+            });
         }
 
         private static string ProcessCollections(string content, Dictionary<string, IEnumerable<Dictionary<string, object>>> collections)
@@ -124,32 +108,38 @@ namespace TemplateProcessor.Infrastructure.Renderers
                 if (!collections.TryGetValue(collectionName, out var items))
                     throw new MissingDataException(collectionName);
 
-                var result = new StringBuilder();
-                foreach (var item in items)
+                var itemList = items as IReadOnlyCollection<Dictionary<string, object>> ?? items.ToList();
+                var result = new StringBuilder(template.Length * Math.Max(itemList.Count, 1));
+                foreach (var item in itemList)
                 {
-                    var row = template;
-                    var rowMatches = PlaceholderRegex.Matches(row);
-                    foreach (Match rm in rowMatches)
+                    var row = ReplacePlaceholders(template, name =>
                     {
-                        var name = rm.Groups["name"].Value.Trim();
-                        var type = rm.Groups["type"].Value;
-                        if (type == "#" || type == "/")
-                            continue;
-
-                        if (item.TryGetValue(name, out var value))
-                        {
-                            var replacement = EscapeLaTeX(value?.ToString() ?? string.Empty);
-                            row = row.Replace(rm.Value, replacement);
-                        }
-                        else
-                        {
+                        if (!item.TryGetValue(name, out var value))
                             throw new MissingDataException($"Item in collection missing property '{name}'");
-                        }
-                    }
+
+                        return EscapeLaTeX(value?.ToString() ?? string.Empty);
+                    });
+
                     result.Append(row);
                 }
 
                 return result.ToString();
+            });
+        }
+
+        private static string ReplacePlaceholders(string text, Func<string, string> replacementFactory)
+        {
+            if (string.IsNullOrEmpty(text) || !PlaceholderRegex.IsMatch(text))
+                return text;
+
+            return PlaceholderRegex.Replace(text, match =>
+            {
+                var type = match.Groups["type"].Value;
+                if (type == "#" || type == "/")
+                    return match.Value;
+
+                var name = match.Groups["name"].Value.Trim();
+                return replacementFactory(name);
             });
         }
 
