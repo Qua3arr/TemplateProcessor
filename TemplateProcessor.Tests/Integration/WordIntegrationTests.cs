@@ -8,6 +8,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using TemplateProcessor.Application.Abstractions;
 using TemplateProcessor.Application.UseCases;
 using TemplateProcessor.Domain.ValueObjects;
+using TemplateProcessor.Infrastructure;
 using TemplateProcessor.Infrastructure.Analyzers;
 using TemplateProcessor.Infrastructure.Renderers;
 using TemplateProcessor.Infrastructure.Storage;
@@ -26,11 +27,25 @@ namespace TemplateProcessor.Tests.Integration
             _templatesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fixtures", "Templates");
 
             var storage = new LocalFileStorage(_templatesPath);
-            var analyzer = new WordTemplateAnalyzer();
-            var renderer = new WordRenderer();
+            var formatResolver = new TemplateFormatResolver();
+            var analyzerFactory = new TemplateAnalyzerFactory(
+                new WordTemplateAnalyzer(),
+                new ExcelTemplateAnalyzer(),
+                new LatexTemplateAnalyzer());
+            var renderingFactory = new RenderingEngineFactory(
+                new WordRenderer(),
+                new ExcelRenderer(),
+                new LatexRenderer());
 
-            var getVariablesUseCase = new GetRequiredVariablesUseCase(storage, analyzer);
-            var renderUseCase = new RenderDocumentUseCase(storage, analyzer, renderer);
+            var getVariablesUseCase = new GetRequiredVariablesUseCase(
+                storage,
+                formatResolver,
+                analyzerFactory);
+            var renderUseCase = new RenderDocumentUseCase(
+                storage,
+                formatResolver,
+                analyzerFactory,
+                renderingFactory);
 
             _module = new TemplateEngineModule(getVariablesUseCase, renderUseCase);
         }
@@ -41,7 +56,7 @@ namespace TemplateProcessor.Tests.Integration
             var templatePath = Path.Combine(_templatesPath, "SampleTemplate.docx");
             var outputFormat = OutputFormat.Docx;
 
-            var context = new TemplateContext
+            var context = new TemplateContextDto
             {
                 Scalars = new Dictionary<string, object>
                 {
@@ -67,23 +82,12 @@ namespace TemplateProcessor.Tests.Integration
             Assert.NotNull(resultStream);
             Assert.True(resultStream.Length > 0, "Generated document is empty");
 
-            var outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Output", "GeneratedDocument.docx");
-            var outputDir = Path.GetDirectoryName(outputPath);
-            if (!Directory.Exists(outputDir))
-                Directory.CreateDirectory(outputDir);
-
-            using (var fileStream = File.Create(outputPath))
-            {
-                resultStream.CopyTo(fileStream);
-            }
-
-            resultStream.Position = 0;
             using (var document = WordprocessingDocument.Open(resultStream, false))
             {
-                var body = document.MainDocumentPart?.Document.Body;
+                var body = document.MainDocumentPart?.Document?.Body;
                 Assert.NotNull(body);
 
-                var fullText = string.Join(" ", body.Descendants<Text>().Select(t => t.Text));
+                var fullText = string.Join(" ", body!.Descendants<Text>().Select(t => t.Text));
 
                 Assert.Contains("123-456", fullText);
                 Assert.Contains("ООО Ромашка", fullText);
@@ -129,7 +133,7 @@ namespace TemplateProcessor.Tests.Integration
             var templatePath = Path.Combine(_templatesPath, "SampleTemplate.docx");
             var outputFormat = OutputFormat.Docx;
 
-            var context = new TemplateContext
+            var context = new TemplateContextDto
             {
                 Scalars = new Dictionary<string, object>
                 {

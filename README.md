@@ -129,24 +129,20 @@ Performance test генерирует LaTeX-документ размером о
 Пример ниже показывает сборку фасада для Word-шаблона. Для Excel и LaTeX нужно использовать соответствующую пару анализатор/рендерер.
 
 ```csharp
+using Microsoft.Extensions.DependencyInjection;
 using TemplateProcessor.Application.Abstractions;
-using TemplateProcessor.Application.UseCases;
 using TemplateProcessor.Domain.ValueObjects;
-using TemplateProcessor.Infrastructure.Analyzers;
-using TemplateProcessor.Infrastructure.Renderers;
-using TemplateProcessor.Infrastructure.Storage;
+using TemplateProcessor.Infrastructure;
 
 var templatesPath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Templates");
 
-var storage = new LocalFileStorage(templatesPath);
-var analyzer = new WordTemplateAnalyzer();
-var renderer = new WordRenderer();
+var services = new ServiceCollection();
+services.AddTemplateProcessor(templatesPath);
 
-var getVariablesUseCase = new GetRequiredVariablesUseCase(storage, analyzer);
-var renderUseCase = new RenderDocumentUseCase(storage, analyzer, renderer);
-var module = new TemplateEngineModule(getVariablesUseCase, renderUseCase);
+await using var provider = services.BuildServiceProvider();
+var module = provider.GetRequiredService<ITemplateEngineModule>();
 
-var context = new TemplateContext
+var context = new TemplateContextDto
 {
     Scalars = new Dictionary<string, object>
     {
@@ -179,16 +175,12 @@ await result.CopyToAsync(file);
 Для Excel:
 
 ```csharp
-var analyzer = new ExcelTemplateAnalyzer();
-var renderer = new ExcelRenderer();
 var outputFormat = OutputFormat.Xlsx;
 ```
 
 Для LaTeX:
 
 ```csharp
-var analyzer = new LatexTemplateAnalyzer();
-var renderer = new LatexRenderer();
 var outputFormat = OutputFormat.Tex;
 ```
 
@@ -240,21 +232,6 @@ TemplateProcessor.Tests/Fixtures/Templates
 ```
 
 При сборке тестового проекта они копируются в выходную директорию.
-
-## Что здесь можно потренировать
-
-Этот проект хорошо подходит для практики:
-
-- разделения на Domain/Application/Infrastructure;
-- портов и адаптеров;
-- работы с потоками и файлами;
-- OpenXML и ClosedXML;
-- обработки шаблонов и регулярных выражений;
-- строгой валидации входных данных;
-- обработки ошибок и пользовательских исключений;
-- логирования;
-- path traversal защиты;
-- unit, integration и performance тестов.
 
 ## Заметки
 

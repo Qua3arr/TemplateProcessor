@@ -1,5 +1,6 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using TemplateProcessor.Application.UseCases;
@@ -21,23 +22,37 @@ namespace TemplateProcessor.Application.Abstractions
             _renderDocumentUseCase = renderDocumentUseCase;
         }
 
-        public async Task<IReadOnlyList<TemplateVariable>> GetRequiredVariablesAsync(
+        public async Task<IReadOnlyList<TemplateVariableDto>> GetRequiredVariablesAsync(
             string templatePath,
             CancellationToken cancellationToken = default)
         {
-            return await _getVariablesUseCase.ExecuteAsync(templatePath, cancellationToken);
+            var variables = await _getVariablesUseCase.ExecuteAsync(templatePath, cancellationToken);
+
+            return variables
+                .Select(v => new TemplateVariableDto
+                {
+                    Name = v.Name,
+                    Type = v.Type
+                })
+                .ToList();
         }
 
         public async Task<Stream> RenderDocumentAsync(
             string templatePath,
             OutputFormat outputFormat,
-            TemplateContext context,
+            TemplateContextDto context,
             CancellationToken cancellationToken = default)
         {
+            var domainContext = new TemplateContext
+            {
+                Scalars = context.Scalars,
+                Collections = context.Collections
+            };
+
             return await _renderDocumentUseCase.ExecuteAsync(
                 templatePath,
                 outputFormat,
-                context,
+                domainContext,
                 cancellationToken);
         }
     }

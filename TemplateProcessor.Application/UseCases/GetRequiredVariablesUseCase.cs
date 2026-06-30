@@ -1,7 +1,8 @@
-﻿using System.Collections.Generic;
-using System.IO;
+using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using TemplateProcessor.Domain.Exceptions;
 using TemplateProcessor.Domain.Ports;
 using TemplateProcessor.Domain.ValueObjects;
 
@@ -10,12 +11,17 @@ namespace TemplateProcessor.Application.UseCases
     public class GetRequiredVariablesUseCase
     {
         private readonly ITemplateStorage _storage;
-        private readonly ITemplateAnalyzer _analyzer;
+        private readonly ITemplateFormatResolver _formatResolver;
+        private readonly ITemplateAnalyzerFactory _analyzerFactory;
 
-        public GetRequiredVariablesUseCase(ITemplateStorage storage, ITemplateAnalyzer analyzer)
+        public GetRequiredVariablesUseCase(
+            ITemplateStorage storage,
+            ITemplateFormatResolver formatResolver,
+            ITemplateAnalyzerFactory analyzerFactory)
         {
             _storage = storage;
-            _analyzer = analyzer;
+            _formatResolver = formatResolver;
+            _analyzerFactory = analyzerFactory;
         }
 
         //Выполняет анализ шаблона.
@@ -23,25 +29,28 @@ namespace TemplateProcessor.Application.UseCases
             string templatePath,
             CancellationToken cancellationToken = default)
         {
-            var format = GetFormatFromPath(templatePath);
-
-            await using var stream = await _storage.ReadAsync(templatePath, cancellationToken);
-
-            return await _analyzer.AnalyzeAsync(stream, format, cancellationToken);
-        }
-
-        //Определяет формат шаблона по расширению файла.
-        private static TemplateFormat GetFormatFromPath(string path)
-        {
-            var extension = Path.GetExtension(path).ToLowerInvariant();
-            return extension switch
+            try
             {
-                ".docx" => TemplateFormat.Word,
-                ".xlsx" => TemplateFormat.Excel,
-                ".tex" => TemplateFormat.Latex,
-                _ => throw new Domain.Exceptions.UnsupportedFormatException(
-                    $"Unsupported template format: '{extension}'. Supported: .docx, .xlsx, .tex")
-            };
+                var format = _formatResolver.GetTemplateFormat(templatePath);
+
+                await using var stream = await _storage.ReadAsync(templatePath, cancellationToken);
+
+                var analyzer = _analyzerFactory.Create(format);
+
+                return await analyzer.AnalyzeAsync(stream, format, cancellationToken);
+            }
+            catch (UnsupportedFormatException)
+            {
+                throw;
+            }
+            catch (TemplateParsingException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new TemplateParsingException($"Error during template analysis: {ex.Message}", ex);
+            }
         }
     }
 }

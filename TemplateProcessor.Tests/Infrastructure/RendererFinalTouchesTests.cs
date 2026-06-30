@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -84,6 +85,37 @@ namespace TemplateProcessor.Tests.Infrastructure
             Assert.Equal(
                 "\\# \\$ \\% \\& \\_ \\{ \\} \\textbackslash{} \\textasciitilde{} \\textasciicircum{}",
                 result);
+        }
+
+        [Fact]
+        public async Task LatexRenderer_RenderSameInputTwice_ProducesIdenticalResult()
+        {
+            var renderer = new LatexRenderer();
+            var template = Encoding.UTF8.GetBytes("Client: {{ClientName}}. Total: {{TotalSum}}.");
+            var context = new TemplateContext
+            {
+                Scalars = new Dictionary<string, object>
+                {
+                    ["ClientName"] = "ООО Ромашка",
+                    ["TotalSum"] = 15000.50
+                }
+            };
+
+            using var firstTemplate = new MemoryStream(template);
+            using var secondTemplate = new MemoryStream(template);
+
+            using var firstResult = await renderer.RenderAsync(
+                firstTemplate,
+                context,
+                TemplateFormat.Latex,
+                OutputFormat.Tex);
+            using var secondResult = await renderer.RenderAsync(
+                secondTemplate,
+                context,
+                TemplateFormat.Latex,
+                OutputFormat.Tex);
+
+            Assert.Equal(ReadAllBytes(firstResult), ReadAllBytes(secondResult));
         }
 
         private static TemplateContext CreateCollectionContext()
@@ -178,6 +210,14 @@ namespace TemplateProcessor.Tests.Infrastructure
         private static string GetElementText(OpenXmlElement element)
         {
             return string.Join("", element.Descendants<Text>().Select(text => text.Text));
+        }
+
+        private static byte[] ReadAllBytes(Stream stream)
+        {
+            stream.Position = 0;
+            using var memoryStream = new MemoryStream();
+            stream.CopyTo(memoryStream);
+            return memoryStream.ToArray();
         }
     }
 }

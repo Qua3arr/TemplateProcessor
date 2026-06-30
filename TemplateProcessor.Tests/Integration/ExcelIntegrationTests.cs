@@ -8,6 +8,7 @@ using TemplateProcessor.Application.Abstractions;
 using TemplateProcessor.Application.UseCases;
 using TemplateProcessor.Domain.Exceptions;
 using TemplateProcessor.Domain.ValueObjects;
+using TemplateProcessor.Infrastructure;
 using TemplateProcessor.Infrastructure.Analyzers;
 using TemplateProcessor.Infrastructure.Renderers;
 using TemplateProcessor.Infrastructure.Storage;
@@ -24,11 +25,25 @@ namespace TemplateProcessor.Tests.Integration
             _templatesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fixtures", "Templates");
 
             var storage = new LocalFileStorage(_templatesPath);
-            var analyzer = new ExcelTemplateAnalyzer();
-            var renderer = new ExcelRenderer();
+            var formatResolver = new TemplateFormatResolver();
+            var analyzerFactory = new TemplateAnalyzerFactory(
+                new WordTemplateAnalyzer(),
+                new ExcelTemplateAnalyzer(),
+                new LatexTemplateAnalyzer());
+            var renderingFactory = new RenderingEngineFactory(
+                new WordRenderer(),
+                new ExcelRenderer(),
+                new LatexRenderer());
 
-            var getVariablesUseCase = new GetRequiredVariablesUseCase(storage, analyzer);
-            var renderUseCase = new RenderDocumentUseCase(storage, analyzer, renderer);
+            var getVariablesUseCase = new GetRequiredVariablesUseCase(
+                storage,
+                formatResolver,
+                analyzerFactory);
+            var renderUseCase = new RenderDocumentUseCase(
+                storage,
+                formatResolver,
+                analyzerFactory,
+                renderingFactory);
 
             _module = new TemplateEngineModule(getVariablesUseCase, renderUseCase);
         }
@@ -39,7 +54,7 @@ namespace TemplateProcessor.Tests.Integration
             var templatePath = Path.Combine(_templatesPath, "SampleTemplate.xlsx");
             var outputFormat = OutputFormat.Xlsx;
 
-            var context = new TemplateContext
+            var context = new TemplateContextDto
             {
                 Scalars = new Dictionary<string, object>
                 {
@@ -65,17 +80,6 @@ namespace TemplateProcessor.Tests.Integration
             Assert.NotNull(resultStream);
             Assert.True(resultStream.Length > 0, "Generated document is empty");
 
-            var outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Output", "GeneratedDocument.xlsx");
-            var outputDir = Path.GetDirectoryName(outputPath);
-            if (!Directory.Exists(outputDir))
-                Directory.CreateDirectory(outputDir);
-
-            using (var fileStream = File.Create(outputPath))
-            {
-                resultStream.CopyTo(fileStream);
-            }
-
-            resultStream.Position = 0;
             using var workbook = new XLWorkbook(resultStream);
             var worksheet = workbook.Worksheet(1);
 
@@ -129,7 +133,7 @@ namespace TemplateProcessor.Tests.Integration
             var templatePath = Path.Combine(_templatesPath, "SampleTemplate.xlsx");
             var outputFormat = OutputFormat.Xlsx;
 
-            var context = new TemplateContext
+            var context = new TemplateContextDto
             {
                 Scalars = new Dictionary<string, object>
                 {

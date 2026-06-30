@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,7 +9,7 @@ namespace TemplateProcessor.Application.Abstractions
     public interface ITemplateEngineModule
     {
         //Анализирует шаблон и возвращает список необходимых переменных.
-        Task<IReadOnlyList<TemplateVariable>> GetRequiredVariablesAsync(
+        Task<IReadOnlyList<TemplateVariableDto>> GetRequiredVariablesAsync(
             string templatePath,
             CancellationToken cancellationToken = default);
 
@@ -17,7 +17,7 @@ namespace TemplateProcessor.Application.Abstractions
         Task<Stream> RenderDocumentAsync(
             string templatePath,
             OutputFormat outputFormat,
-            TemplateContext context,
+            TemplateContextDto context,
             CancellationToken cancellationToken = default);
     }
 }
