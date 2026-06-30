@@ -31,13 +31,22 @@ namespace TemplateProcessor.Infrastructure.Renderers
             @"\{\{/(?<name>[^{}]+)\}\}",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private readonly WordToPdfConverter _pdfConverter;
+        private readonly Lazy<WordToPdfConverter> _pdfConverter;
 
-        public WordRenderer() : this(new WordToPdfConverter()) { }
+        public WordRenderer() : this(() => new WordToPdfConverter()) { }
 
         public WordRenderer(WordToPdfConverter pdfConverter)
         {
-            _pdfConverter = pdfConverter ?? throw new ArgumentNullException(nameof(pdfConverter));
+            if (pdfConverter == null)
+                throw new ArgumentNullException(nameof(pdfConverter));
+
+            _pdfConverter = new Lazy<WordToPdfConverter>(() => pdfConverter);
+        }
+
+        private WordRenderer(Func<WordToPdfConverter> pdfConverterFactory)
+        {
+            _pdfConverter = new Lazy<WordToPdfConverter>(
+                pdfConverterFactory ?? throw new ArgumentNullException(nameof(pdfConverterFactory)));
         }
 
         public async Task<Stream> RenderAsync(
@@ -54,7 +63,7 @@ namespace TemplateProcessor.Infrastructure.Renderers
 
             if (outputFormat == OutputFormat.Pdf)
             {
-                return await _pdfConverter.ConvertAsync(docxStream, cancellationToken);
+                return await _pdfConverter.Value.ConvertAsync(docxStream, cancellationToken);
             }
 
             if (outputFormat == OutputFormat.Docx)
@@ -201,6 +210,8 @@ namespace TemplateProcessor.Infrastructure.Renderers
             if (newRow == null)
                 throw new InvalidOperationException("Failed to clone row");
 
+            PreserveMergedCellProperties(original, newRow);
+
             ReplacePlaceholders(
                 newRow,
                 itemData,
@@ -208,6 +219,42 @@ namespace TemplateProcessor.Infrastructure.Renderers
                 scalars);
 
             return newRow;
+        }
+
+        private static void PreserveMergedCellProperties(TableRow sourceRow, TableRow targetRow)
+        {
+            var sourceCells = sourceRow.Elements<TableCell>().ToList();
+            var targetCells = targetRow.Elements<TableCell>().ToList();
+
+            for (var i = 0; i < sourceCells.Count && i < targetCells.Count; i++)
+            {
+                var sourceProperties = sourceCells[i].GetFirstChild<TableCellProperties>();
+                if (sourceProperties == null)
+                    continue;
+
+                var targetProperties = targetCells[i].GetFirstChild<TableCellProperties>();
+                if (targetProperties == null)
+                {
+                    targetProperties = new TableCellProperties();
+                    targetCells[i].PrependChild(targetProperties);
+                }
+
+                CopyPropertyIfMissing<GridSpan>(sourceProperties, targetProperties);
+                CopyPropertyIfMissing<HorizontalMerge>(sourceProperties, targetProperties);
+                CopyPropertyIfMissing<VerticalMerge>(sourceProperties, targetProperties);
+            }
+        }
+
+        private static void CopyPropertyIfMissing<T>(
+            TableCellProperties sourceProperties,
+            TableCellProperties targetProperties)
+            where T : OpenXmlElement
+        {
+            var sourceProperty = sourceProperties.GetFirstChild<T>();
+            if (sourceProperty == null || targetProperties.GetFirstChild<T>() != null)
+                return;
+
+            targetProperties.AppendChild(sourceProperty.CloneNode(true));
         }
 
         private static void ReplacePlaceholders(

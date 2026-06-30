@@ -172,36 +172,51 @@ namespace TemplateProcessor.Infrastructure.Renderers
             var templateRows = rows
                 .Skip(startIndex + 1)
                 .Take(endIndex - startIndex - 1)
-                .Select(CaptureRow)
+                .Select((row, index) => CaptureRow(row, index))
                 .ToList();
 
+            var mergeRanges = CaptureMergeRanges(worksheet, rows, startIndex, endIndex);
             var itemKeys = items
                 .SelectMany(item => item.Keys)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var dynamicRowIndexes = GetDynamicRowIndexes(templateRows, mergeRanges, scalars, itemKeys);
 
             var insertRowNumber = startRowNumber;
-            var dynamicRows = new List<RowTemplate>();
+            var currentSegment = new List<RowTemplate>();
+            bool? currentSegmentIsDynamic = null;
 
             foreach (var templateRow in templateRows)
             {
-                if (UsesItemData(templateRow, scalars, itemKeys))
+                var isDynamic = dynamicRowIndexes.Contains(templateRow.RelativeRowIndex);
+                if (currentSegmentIsDynamic.HasValue && currentSegmentIsDynamic.Value != isDynamic)
                 {
-                    dynamicRows.Add(templateRow);
-                    continue;
+                    InsertSegment(
+                        worksheet,
+                        ref insertRowNumber,
+                        currentSegment,
+                        currentSegmentIsDynamic.Value,
+                        mergeRanges,
+                        items,
+                        scalars);
+
+                    currentSegment.Clear();
                 }
 
-                InsertDynamicRows(worksheet, ref insertRowNumber, dynamicRows, items, scalars);
-                dynamicRows.Clear();
-
-                InsertTemplateRow(
-                    worksheet,
-                    ref insertRowNumber,
-                    templateRow,
-                    scalars,
-                    name => new MissingDataException(name));
+                currentSegmentIsDynamic = isDynamic;
+                currentSegment.Add(templateRow);
             }
 
-            InsertDynamicRows(worksheet, ref insertRowNumber, dynamicRows, items, scalars);
+            if (currentSegmentIsDynamic.HasValue)
+            {
+                InsertSegment(
+                    worksheet,
+                    ref insertRowNumber,
+                    currentSegment,
+                    currentSegmentIsDynamic.Value,
+                    mergeRanges,
+                    items,
+                    scalars);
+            }
 
             var insertedRowsCount = insertRowNumber - startRowNumber;
             for (var rowNumber = endRowNumber + insertedRowsCount; rowNumber >= startRowNumber + insertedRowsCount; rowNumber--)
@@ -210,61 +225,190 @@ namespace TemplateProcessor.Infrastructure.Renderers
             }
         }
 
-        private static void InsertDynamicRows(
+        private static IReadOnlyList<MergeTemplate> CaptureMergeRanges(
+            IXLWorksheet worksheet,
+            IReadOnlyList<IXLRow> rows,
+            int startIndex,
+            int endIndex)
+        {
+            if (endIndex <= startIndex + 1)
+                return Array.Empty<MergeTemplate>();
+
+            var templateStartRowNumber = rows[startIndex + 1].RowNumber();
+            var templateEndRowNumber = rows[endIndex - 1].RowNumber();
+            var result = new List<MergeTemplate>();
+
+            foreach (var range in worksheet.MergedRanges.ToList())
+            {
+                var firstRowNumber = range.FirstRow().RowNumber();
+                var lastRowNumber = range.LastRow().RowNumber();
+
+                if (lastRowNumber < templateStartRowNumber || firstRowNumber > templateEndRowNumber)
+                    continue;
+
+                if (firstRowNumber < templateStartRowNumber || lastRowNumber > templateEndRowNumber)
+                {
+                    throw new TemplateParsingException(
+                        $"Merged range '{range.RangeAddress}' crosses collection block boundary.");
+                }
+
+                result.Add(new MergeTemplate(
+                    firstRowNumber - templateStartRowNumber,
+                    lastRowNumber - templateStartRowNumber,
+                    range.FirstColumn().ColumnNumber(),
+                    range.LastColumn().ColumnNumber()));
+            }
+
+            return result;
+        }
+
+        private static HashSet<int> GetDynamicRowIndexes(
+            IReadOnlyList<RowTemplate> rows,
+            IReadOnlyList<MergeTemplate> mergeRanges,
+            IReadOnlyDictionary<string, object> scalars,
+            IReadOnlySet<string> itemKeys)
+        {
+            var dynamicRowIndexes = rows
+                .Where(row => UsesItemData(row, scalars, itemKeys))
+                .Select(row => row.RelativeRowIndex)
+                .ToHashSet();
+
+            foreach (var mergeRange in mergeRanges)
+            {
+                var hasDynamicRow = Enumerable
+                    .Range(mergeRange.FirstRelativeRowIndex, mergeRange.LastRelativeRowIndex - mergeRange.FirstRelativeRowIndex + 1)
+                    .Any(dynamicRowIndexes.Contains);
+
+                if (!hasDynamicRow)
+                    continue;
+
+                for (var relativeRowIndex = mergeRange.FirstRelativeRowIndex;
+                     relativeRowIndex <= mergeRange.LastRelativeRowIndex;
+                     relativeRowIndex++)
+                {
+                    dynamicRowIndexes.Add(relativeRowIndex);
+                }
+            }
+
+            return dynamicRowIndexes;
+        }
+
+        private static void InsertSegment(
             IXLWorksheet worksheet,
             ref int insertRowNumber,
-            IReadOnlyList<RowTemplate> dynamicRows,
+            IReadOnlyList<RowTemplate> segmentRows,
+            bool isDynamic,
+            IReadOnlyList<MergeTemplate> allMergeRanges,
             IReadOnlyList<Dictionary<string, object>> items,
             Dictionary<string, object> scalars)
         {
-            if (dynamicRows.Count == 0)
+            if (segmentRows.Count == 0)
                 return;
+
+            var segmentMergeRanges = GetMergeRangesForSegment(segmentRows, allMergeRanges);
+            if (!isDynamic)
+            {
+                InsertTemplateRows(
+                    worksheet,
+                    ref insertRowNumber,
+                    segmentRows,
+                    segmentMergeRanges,
+                    scalars,
+                    name => new MissingDataException(name));
+                return;
+            }
 
             foreach (var item in items)
             {
-                foreach (var templateRow in dynamicRows)
-                {
-                    InsertTemplateRow(
-                        worksheet,
-                        ref insertRowNumber,
-                        templateRow,
-                        item,
-                        name => new MissingDataException($"Item in collection missing property '{name}'"),
-                        scalars);
-                }
+                InsertTemplateRows(
+                    worksheet,
+                    ref insertRowNumber,
+                    segmentRows,
+                    segmentMergeRanges,
+                    item,
+                    name => new MissingDataException($"Item in collection missing property '{name}'"),
+                    scalars);
             }
         }
 
-        private static void InsertTemplateRow(
+        private static IReadOnlyList<MergeTemplate> GetMergeRangesForSegment(
+            IReadOnlyList<RowTemplate> segmentRows,
+            IReadOnlyList<MergeTemplate> allMergeRanges)
+        {
+            var rowIndexes = segmentRows
+                .Select(row => row.RelativeRowIndex)
+                .ToHashSet();
+
+            return allMergeRanges
+                .Where(range =>
+                    rowIndexes.Contains(range.FirstRelativeRowIndex) &&
+                    rowIndexes.Contains(range.LastRelativeRowIndex))
+                .ToList();
+        }
+
+        private static void InsertTemplateRows(
             IXLWorksheet worksheet,
             ref int rowNumber,
-            RowTemplate template,
+            IReadOnlyList<RowTemplate> templates,
+            IReadOnlyList<MergeTemplate> mergeRanges,
             IReadOnlyDictionary<string, object> values,
             Func<string, Exception> missingExceptionFactory,
             IReadOnlyDictionary<string, object>? fallbackValues = null)
         {
-            worksheet.Row(rowNumber).InsertRowsAbove(1);
-            var targetRow = worksheet.Row(rowNumber);
-            targetRow.Height = template.Height;
+            if (templates.Count == 0)
+                return;
 
-            foreach (var cell in template.Cells)
+            var firstInsertedRowNumber = rowNumber;
+            var firstRelativeRowIndex = templates[0].RelativeRowIndex;
+
+            worksheet.Row(rowNumber).InsertRowsAbove(templates.Count);
+
+            for (var rowOffset = 0; rowOffset < templates.Count; rowOffset++)
             {
-                var targetCell = targetRow.Cell(cell.ColumnNumber);
-                targetCell.Style = cell.Style;
-                targetCell.Value = ReplacePlaceholders(cell.Text, values, missingExceptionFactory, fallbackValues);
+                var template = templates[rowOffset];
+                var targetRow = worksheet.Row(rowNumber + rowOffset);
+                targetRow.Height = template.Height;
+
+                foreach (var cell in template.Cells)
+                {
+                    var targetCell = targetRow.Cell(cell.ColumnNumber);
+                    targetCell.Style = cell.Style;
+                    targetCell.Value = ReplacePlaceholders(cell.Text, values, missingExceptionFactory, fallbackValues);
+                }
             }
 
-            rowNumber++;
+            ApplyMergeRanges(worksheet, firstInsertedRowNumber, firstRelativeRowIndex, mergeRanges);
+            rowNumber += templates.Count;
         }
 
-        private static RowTemplate CaptureRow(IXLRow row)
+        private static void ApplyMergeRanges(
+            IXLWorksheet worksheet,
+            int firstInsertedRowNumber,
+            int firstRelativeRowIndex,
+            IReadOnlyList<MergeTemplate> mergeRanges)
+        {
+            foreach (var mergeRange in mergeRanges)
+            {
+                var firstRow = firstInsertedRowNumber + mergeRange.FirstRelativeRowIndex - firstRelativeRowIndex;
+                var lastRow = firstInsertedRowNumber + mergeRange.LastRelativeRowIndex - firstRelativeRowIndex;
+
+                if (firstRow == lastRow && mergeRange.FirstColumnNumber == mergeRange.LastColumnNumber)
+                    continue;
+
+                worksheet
+                    .Range(firstRow, mergeRange.FirstColumnNumber, lastRow, mergeRange.LastColumnNumber)
+                    .Merge();
+            }
+        }
+
+        private static RowTemplate CaptureRow(IXLRow row, int relativeRowIndex)
         {
             var cells = row.CellsUsed()
                 .OrderBy(cell => cell.Address.ColumnNumber)
                 .Select(cell => new CellTemplate(cell.Address.ColumnNumber, cell.GetString(), cell.Style))
                 .ToList();
 
-            return new RowTemplate(row.Height, string.Join("", cells.Select(cell => cell.Text)), cells);
+            return new RowTemplate(relativeRowIndex, row.Height, string.Join("", cells.Select(cell => cell.Text)), cells);
         }
 
         private static bool UsesItemData(
@@ -362,7 +506,17 @@ namespace TemplateProcessor.Infrastructure.Renderers
             };
         }
 
-        private sealed record RowTemplate(double Height, string Text, IReadOnlyList<CellTemplate> Cells);
+        private sealed record RowTemplate(
+            int RelativeRowIndex,
+            double Height,
+            string Text,
+            IReadOnlyList<CellTemplate> Cells);
+
+        private sealed record MergeTemplate(
+            int FirstRelativeRowIndex,
+            int LastRelativeRowIndex,
+            int FirstColumnNumber,
+            int LastColumnNumber);
 
         private sealed record CellTemplate(int ColumnNumber, string Text, IXLStyle Style);
     }

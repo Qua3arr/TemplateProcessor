@@ -24,13 +24,22 @@ namespace TemplateProcessor.Infrastructure.Renderers
             @"\{\{#(?<name>[^{}]+)\}\}(?<template>.*?)\{\{/\k<name>\}\}",
             RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
-        private readonly LatexToPdfConverter _pdfConverter;
+        private readonly Lazy<LatexToPdfConverter> _pdfConverter;
 
-        public LatexRenderer() : this(new LatexToPdfConverter()) { }
+        public LatexRenderer() : this(() => new LatexToPdfConverter()) { }
 
         public LatexRenderer(LatexToPdfConverter pdfConverter)
         {
-            _pdfConverter = pdfConverter ?? throw new ArgumentNullException(nameof(pdfConverter));
+            if (pdfConverter == null)
+                throw new ArgumentNullException(nameof(pdfConverter));
+
+            _pdfConverter = new Lazy<LatexToPdfConverter>(() => pdfConverter);
+        }
+
+        private LatexRenderer(Func<LatexToPdfConverter> pdfConverterFactory)
+        {
+            _pdfConverter = new Lazy<LatexToPdfConverter>(
+                pdfConverterFactory ?? throw new ArgumentNullException(nameof(pdfConverterFactory)));
         }
 
         public async Task<Stream> RenderAsync(
@@ -48,7 +57,7 @@ namespace TemplateProcessor.Infrastructure.Renderers
 
             if (outputFormat == OutputFormat.Pdf)
             {
-                return await _pdfConverter.ConvertAsync(texStream, cancellationToken);
+                return await _pdfConverter.Value.ConvertAsync(texStream, cancellationToken);
             }
 
             if (outputFormat == OutputFormat.Tex)
@@ -149,17 +158,25 @@ namespace TemplateProcessor.Infrastructure.Renderers
             if (string.IsNullOrEmpty(text))
                 return text;
 
-            var sb = new StringBuilder(text);
-            sb.Replace("\\", "\\textbackslash{}");
-            sb.Replace("#", "\\#");
-            sb.Replace("$", "\\$");
-            sb.Replace("%", "\\%");
-            sb.Replace("&", "\\&");
-            sb.Replace("_", "\\_");
-            sb.Replace("{", "\\{");
-            sb.Replace("}", "\\}");
-            sb.Replace("~", "\\textasciitilde{}");
-            sb.Replace("^", "\\textasciicircum{}");
+            var sb = new StringBuilder(text.Length);
+            foreach (var ch in text)
+            {
+                sb.Append(ch switch
+                {
+                    '\\' => "\\textbackslash{}",
+                    '#' => "\\#",
+                    '$' => "\\$",
+                    '%' => "\\%",
+                    '&' => "\\&",
+                    '_' => "\\_",
+                    '{' => "\\{",
+                    '}' => "\\}",
+                    '~' => "\\textasciitilde{}",
+                    '^' => "\\textasciicircum{}",
+                    _ => ch.ToString()
+                });
+            }
+
             return sb.ToString();
         }
     }
